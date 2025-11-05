@@ -35,7 +35,6 @@ type UIConfig struct {
 type HaxenConfig struct {
 	Port                    int                    `yaml:"port"`
 	DatabaseURL             string                 `yaml:"database_url"`
-	RedisURL                string                 `yaml:"redis_url"`
 	MaxConcurrentRequests   int                    `yaml:"max_concurrent_requests"`
 	RequestTimeout          time.Duration          `yaml:"request_timeout"`
 	CircuitBreakerThreshold int                    `yaml:"circuit_breaker_threshold"`

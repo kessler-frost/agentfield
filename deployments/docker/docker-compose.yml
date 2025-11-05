@@ -18,7 +18,6 @@ services:
       dockerfile: deployments/docker/Dockerfile.control-plane
     environment:
       HAXEN_DATABASE_URL: postgres://haxen:haxen@postgres:5432/haxen?sslmode=disable
-      HAXEN_REDIS_URL: redis://redis:6379/0
       HAXEN_HTTP_ADDR: 0.0.0.0:8080
     ports:
       - "8080:8080"

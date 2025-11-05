@@ -25,7 +25,7 @@ Haxen provides a modular platform for orchestrating AI agents. The system is com
                       ▼
 ┌───────────────────────────────────────────────────────────────┐
 │                      External Dependencies                    │
-│   - PostgreSQL, Redis, vector stores (configurable)           │
+│   - PostgreSQL, vector stores (configurable)                  │
 │   - Observability stack (OpenTelemetry, Prometheus, etc.)     │
 │   - Pluggable LLM providers (via SDKs)                        │
 └───────────────────────────────────────────────────────────────┘

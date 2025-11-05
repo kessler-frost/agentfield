@@ -48,7 +48,6 @@ The install script performs:
 Copy `control-plane/config/.env.example` to `.env` (if available) and adjust:
 
 - `HAXEN_DATABASE_URL` — PostgreSQL connection string.
-- `HAXEN_REDIS_URL` — Redis instance used for queues.
 - `HAXEN_JWT_SECRET` — Authentication secret (development only).
 
 ## Database Migrations
