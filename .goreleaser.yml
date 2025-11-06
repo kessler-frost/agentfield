@@ -5,7 +5,8 @@ project_name: agentfield
 
 before:
   hooks:
-    - cd control-plane/web/client && npm install --silent && npm run build --silent
+    - npm --prefix control-plane/web/client install --silent
+    - npm --prefix control-plane/web/client run build --silent
 
 builds:
   - id: agentfield
