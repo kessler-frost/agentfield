@@ -38,11 +38,6 @@ curl -fsSL https://agentfield.ai/install.sh | bash && af init my-agents
 curl -fsSL https://agentfield.ai/install.sh | bash
 ```
 
-**Windows (PowerShell):**
-```powershell
-iwr -useb https://agentfield.ai/install.ps1 | iex
-```
-
 Verify installation:
 ```bash
 agentfield --version
@@ -63,7 +58,6 @@ The installer automatically detects your platform and sets everything up. No sud
 curl -fsSL https://agentfield.ai/install.sh | bash
 
 # Start control plane + create your first agent
-af dev
 af init my-agents && cd my-agents
 af run
 ```
@@ -89,17 +83,21 @@ Write your first agent—automatically get a REST API:
 from agentfield import Agent
 
 # Create an agent
-app = Agent("greeting-agent")
+app = Agent(node_id="greeting-agent",
+            model="openrouter/meta-llama/llama-4-maverick")
 
 # Decorate a function—becomes a REST endpoint automatically
 @app.reasoner()
 async def say_hello(name: str) -> dict:
+  
     message = await app.ai(f"Generate a personalized greeting for {name}")
+
     return {"greeting": message}
 ```
 
 **Deploy:**
 ```bash
+export OPENROUTER_API_KEY="sk-..."
 af run
 ```
 

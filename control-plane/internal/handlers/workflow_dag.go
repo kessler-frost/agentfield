@@ -64,6 +64,30 @@ type SessionWorkflowsResponse struct {
 	AllWorkflows   []WorkflowDAGNode `json:"all_workflows"`
 }
 
+type WorkflowDAGLightweightNode struct {
+	ExecutionID       string  `json:"execution_id"`
+	ParentExecutionID *string `json:"parent_execution_id,omitempty"`
+	AgentNodeID       string  `json:"agent_node_id"`
+	ReasonerID        string  `json:"reasoner_id"`
+	Status            string  `json:"status"`
+	StartedAt         string  `json:"started_at"`
+	CompletedAt       *string `json:"completed_at,omitempty"`
+	DurationMS        *int64  `json:"duration_ms,omitempty"`
+	WorkflowDepth     int     `json:"workflow_depth"`
+}
+
+type WorkflowDAGLightweightResponse struct {
+	RootWorkflowID string                        `json:"root_workflow_id"`
+	WorkflowStatus string                        `json:"workflow_status"`
+	WorkflowName   string                        `json:"workflow_name"`
+	SessionID      *string                       `json:"session_id,omitempty"`
+	ActorID        *string                       `json:"actor_id,omitempty"`
+	TotalNodes     int                           `json:"total_nodes"`
+	MaxDepth       int                           `json:"max_depth"`
+	Timeline       []WorkflowDAGLightweightNode  `json:"timeline"`
+	Mode           string                        `json:"mode"`
+}
+
 func GetWorkflowDAGHandler(storageProvider storage.StorageProvider) gin.HandlerFunc {
 	svc := newExecutionGraphService(storageProvider)
 	return svc.handleGetWorkflowDAG
@@ -87,6 +111,25 @@ func (s *executionGraphService) handleGetWorkflowDAG(c *gin.Context) {
 	}
 	if len(executions) == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "workflow not found"})
+		return
+	}
+
+	if isLightweightRequest(c) {
+		timeline, workflowStatus, workflowName, sessionID, actorID, maxDepth := buildLightweightExecutionDAG(executions)
+
+		response := WorkflowDAGLightweightResponse{
+			RootWorkflowID: runID,
+			WorkflowStatus: workflowStatus,
+			WorkflowName:   workflowName,
+			SessionID:      sessionID,
+			ActorID:        actorID,
+			TotalNodes:     len(executions),
+			MaxDepth:       maxDepth,
+			Timeline:       timeline,
+			Mode:           "lightweight",
+		}
+
+		c.JSON(http.StatusOK, response)
 		return
 	}
 
@@ -270,12 +313,37 @@ func buildExecutionDAG(executions []*types.Execution) (WorkflowDAGNode, []Workfl
 
 	dag := buildNode(rootExec, 0)
 
+	// Compute depth for each execution (same logic as lightweight DAG)
+	depthCache := make(map[string]int, len(executions))
+	var computeDepth func(exec *types.Execution) int
+	computeDepth = func(exec *types.Execution) int {
+		if exec == nil {
+			return 0
+		}
+		if depth, ok := depthCache[exec.ExecutionID]; ok {
+			return depth
+		}
+		depth := 0
+		if exec.ParentExecutionID != nil && *exec.ParentExecutionID != "" {
+			if parent, ok := execMap[*exec.ParentExecutionID]; ok {
+				depth = computeDepth(parent) + 1
+			}
+		}
+		if depth > maxDepth {
+			maxDepth = depth
+		}
+		depthCache[exec.ExecutionID] = depth
+		return depth
+	}
+
 	timeline := make([]WorkflowDAGNode, 0, len(executions))
 	sort.Slice(executions, func(i, j int) bool {
 		return executions[i].StartedAt.Before(executions[j].StartedAt)
 	})
 	for _, exec := range executions {
-		node := executionToDAGNode(exec, 0)
+		// Compute the actual depth from parent relationships
+		depth := computeDepth(exec)
+		node := executionToDAGNode(exec, depth)
 		node.Children = nil
 		timeline = append(timeline, node)
 	}
@@ -298,6 +366,85 @@ func buildExecutionDAG(executions []*types.Execution) (WorkflowDAGNode, []Workfl
 // BuildWorkflowDAG exposes the DAG construction logic for other packages (UI handlers).
 func BuildWorkflowDAG(executions []*types.Execution) (WorkflowDAGNode, []WorkflowDAGNode, string, string, *string, *string, int) {
 	return buildExecutionDAG(executions)
+}
+
+func buildLightweightExecutionDAG(executions []*types.Execution) ([]WorkflowDAGLightweightNode, string, string, *string, *string, int) {
+	if len(executions) == 0 {
+		return []WorkflowDAGLightweightNode{}, "", "", nil, nil, 0
+	}
+
+	execMap := make(map[string]*types.Execution, len(executions))
+	for _, exec := range executions {
+		if exec == nil {
+			continue
+		}
+		execMap[exec.ExecutionID] = exec
+	}
+
+	depthCache := make(map[string]int, len(executions))
+	var maxDepth int
+
+	var computeDepth func(exec *types.Execution) int
+	computeDepth = func(exec *types.Execution) int {
+		if exec == nil {
+			return 0
+		}
+
+		if depth, ok := depthCache[exec.ExecutionID]; ok {
+			return depth
+		}
+
+		depth := 0
+		if exec.ParentExecutionID != nil && *exec.ParentExecutionID != "" {
+			if parent, ok := execMap[*exec.ParentExecutionID]; ok {
+				depth = computeDepth(parent) + 1
+			}
+		}
+
+		if depth > maxDepth {
+			maxDepth = depth
+		}
+
+		depthCache[exec.ExecutionID] = depth
+		return depth
+	}
+
+	sort.Slice(executions, func(i, j int) bool {
+		return executions[i].StartedAt.Before(executions[j].StartedAt)
+	})
+
+	timeline := make([]WorkflowDAGLightweightNode, 0, len(executions))
+	for _, exec := range executions {
+		if exec == nil {
+			continue
+		}
+
+		depth := computeDepth(exec)
+		node := executionToLightweightNode(exec, depth)
+		timeline = append(timeline, node)
+	}
+
+	rootExec := executions[0]
+	for _, exec := range executions {
+		if exec.ParentExecutionID == nil || *exec.ParentExecutionID == "" {
+			rootExec = exec
+			break
+		}
+	}
+
+	status := deriveOverallStatus(executions)
+	workflowName := ""
+	if rootExec != nil && rootExec.ReasonerID != "" {
+		workflowName = rootExec.ReasonerID
+	}
+
+	var sessionID, actorID *string
+	if rootExec != nil {
+		sessionID = rootExec.SessionID
+		actorID = rootExec.ActorID
+	}
+
+	return timeline, status, workflowName, sessionID, actorID, maxDepth
 }
 
 func executionToDAGNode(exec *types.Execution, depth int) WorkflowDAGNode {
@@ -339,4 +486,34 @@ func deriveOverallStatus(executions []*types.Execution) string {
 		return string(types.ExecutionStatusRunning)
 	}
 	return string(types.ExecutionStatusSucceeded)
+}
+
+func executionToLightweightNode(exec *types.Execution, depth int) WorkflowDAGLightweightNode {
+	started := exec.StartedAt.Format(time.RFC3339)
+	var completed *string
+	if exec.CompletedAt != nil {
+		formatted := exec.CompletedAt.Format(time.RFC3339)
+		completed = &formatted
+	}
+
+	return WorkflowDAGLightweightNode{
+		ExecutionID:       exec.ExecutionID,
+		ParentExecutionID: exec.ParentExecutionID,
+		AgentNodeID:       exec.AgentNodeID,
+		ReasonerID:        exec.ReasonerID,
+		Status:            types.NormalizeExecutionStatus(exec.Status),
+		StartedAt:         started,
+		CompletedAt:       completed,
+		DurationMS:        exec.DurationMS,
+		WorkflowDepth:     depth,
+	}
+}
+
+func isLightweightRequest(c *gin.Context) bool {
+	if strings.EqualFold(c.Query("mode"), "lightweight") {
+		return true
+	}
+
+	lightweight := c.Query("lightweight")
+	return strings.EqualFold(lightweight, "true") || strings.EqualFold(lightweight, "1")
 }

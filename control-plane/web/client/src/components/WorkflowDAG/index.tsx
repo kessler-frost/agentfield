@@ -25,10 +25,20 @@ import { NodeDetailSidebar } from "./NodeDetailSidebar";
 import { VirtualizedDAG } from "./VirtualizedDAG";
 import { WorkflowNode } from "./WorkflowNode";
 import { LayoutManager, type AllLayoutType } from "./layouts/LayoutManager";
+import {
+  WorkflowDeckGLView,
+  buildDeckGraph,
+  type DeckGraphData,
+} from "./DeckGLView";
 
 import { getWorkflowDAG } from "../../services/workflowsApi";
+import type {
+  WorkflowDAGLightweightNode,
+  WorkflowDAGLightweightResponse,
+} from "../../types/workflows";
 import { Card, CardContent } from "../ui/card";
 import { cn } from "../../lib/utils";
+import { formatNumberWithCommas } from "../../utils/numberFormat";
 
 interface WorkflowDAGNode {
   workflow_id: string;
@@ -42,9 +52,9 @@ interface WorkflowDAGNode {
   parent_workflow_id?: string;
   parent_execution_id?: string;
   workflow_depth: number;
-  children: WorkflowDAGNode[];
   agent_name?: string;
   task_name?: string;
+  children?: WorkflowDAGNode[];
 }
 
 export interface WorkflowDAGResponse {
@@ -52,9 +62,14 @@ export interface WorkflowDAGResponse {
   session_id?: string;
   actor_id?: string;
   total_nodes: number;
+  displayed_nodes?: number;
   max_depth: number;
-  dag: WorkflowDAGNode;
+  dag?: WorkflowDAGNode;
   timeline: WorkflowDAGNode[];
+  workflow_status?: string;
+  workflow_name?: string;
+  mode?: "lightweight";
+  status_counts?: Record<string, number>;
 }
 
 export interface WorkflowDAGControls {
@@ -62,9 +77,60 @@ export interface WorkflowDAGControls {
   focusOnNodes: (nodeIds: string[], options?: { padding?: number }) => void;
 }
 
+function isLightweightDAGResponse(
+  data: WorkflowDAGResponse | WorkflowDAGLightweightResponse | null
+): data is WorkflowDAGLightweightResponse {
+  if (!data) {
+    return false;
+  }
+  return (data as WorkflowDAGLightweightResponse).mode === "lightweight";
+}
+
+function mapLightweightNode(
+  node: WorkflowDAGLightweightNode,
+  workflowId: string
+): WorkflowDAGNode {
+  return {
+    workflow_id: workflowId,
+    execution_id: node.execution_id,
+    agent_node_id: node.agent_node_id,
+    reasoner_id: node.reasoner_id,
+    status: node.status,
+    started_at: node.started_at,
+    completed_at: node.completed_at,
+    duration_ms: node.duration_ms,
+    parent_execution_id: node.parent_execution_id,
+    workflow_depth: node.workflow_depth,
+  };
+}
+
+function adaptLightweightResponse(
+  response: WorkflowDAGLightweightResponse
+): WorkflowDAGResponse {
+  const timeline = response.timeline.map((node) =>
+    mapLightweightNode(node, response.root_workflow_id)
+  );
+
+  const dag = timeline.length > 0 ? { ...timeline[0] } : undefined;
+
+  return {
+    root_workflow_id: response.root_workflow_id,
+    session_id: response.session_id,
+    actor_id: response.actor_id,
+    total_nodes: response.total_nodes,
+    displayed_nodes: timeline.length,
+    max_depth: response.max_depth,
+    dag,
+    timeline,
+    workflow_status: response.workflow_status,
+    workflow_name: response.workflow_name,
+    mode: "lightweight",
+  };
+}
+
 interface WorkflowDAGViewerProps {
   workflowId: string;
-  dagData?: WorkflowDAGResponse | null;
+  dagData?: WorkflowDAGResponse | WorkflowDAGLightweightResponse | null;
   loading?: boolean;
   error?: string | null;
   onClose?: () => void;
@@ -111,12 +177,28 @@ function WorkflowDAGViewerInner({
   const nodesRef = useRef<Node[]>([]);
   const edgesRef = useRef<Edge[]>([]);
   const controlsRegisteredRef = useRef(false);
+  const [internalDagData, setInternalDagData] =
+    useState<WorkflowDAGResponse | null>(null);
+  const largeGraphRef = useRef(false);
+  const [deckGraphData, setDeckGraphData] = useState<DeckGraphData | null>(null);
+
+  const externalDagData = useMemo<WorkflowDAGResponse | null>(() => {
+    if (dagData === undefined || dagData === null) {
+      return dagData ?? null;
+    }
+    return isLightweightDAGResponse(dagData)
+      ? adaptLightweightResponse(dagData)
+      : dagData;
+  }, [dagData]);
+
+  const effectiveDagData: WorkflowDAGResponse | null =
+    dagData !== undefined ? externalDagData : internalDagData;
 
   const graphRelationships = useMemo(() => {
     const parentMap = new Map<string, string | null>();
     const childMap = new Map<string, string[]>();
 
-    const timeline = dagData?.timeline ?? [];
+    const timeline: WorkflowDAGNode[] = effectiveDagData?.timeline ?? [];
     timeline.forEach((node) => {
       parentMap.set(node.execution_id, node.parent_execution_id ?? null);
       if (node.parent_execution_id) {
@@ -128,13 +210,13 @@ function WorkflowDAGViewerInner({
     });
 
     return { parentMap, childMap };
-  }, [dagData]);
+  }, [effectiveDagData]);
 
   const durationStats = useMemo(() => {
-    const timeline = dagData?.timeline ?? [];
-    const durations = timeline
+    const timeline: WorkflowDAGNode[] = effectiveDagData?.timeline ?? [];
+    const durations: number[] = timeline
       .map((node) => node.duration_ms ?? 0)
-      .filter((value) => typeof value === "number" && value > 0);
+      .filter((value) => value > 0);
 
     if (!durations.length) {
       return { max: 0, min: 0, avg: 0 };
@@ -143,12 +225,21 @@ function WorkflowDAGViewerInner({
     const max = Math.max(...durations);
     const min = Math.min(...durations);
     const avg =
-      durations.reduce((sum, value) => sum + value, 0) / durations.length;
+      durations.reduce(
+        (sum: number, value: number) => sum + value,
+        0
+      ) / durations.length;
     return { max, min, avg };
-  }, [dagData?.timeline]);
+  }, [effectiveDagData]);
 
   // Layout manager instance
-  const layoutManager = useMemo(() => new LayoutManager(), []);
+  const layoutManager = useMemo(
+    () =>
+      new LayoutManager({
+        enableWorker: import.meta.env?.VITE_ENABLE_LAYOUT_WORKER === "true",
+      }),
+    []
+  );
 
   // Memoized objects to prevent unnecessary re-renders
   const nodeTypes = useMemo(
@@ -209,11 +300,106 @@ function WorkflowDAGViewerInner({
   );
 
   // Performance threshold for switching to virtualized rendering
-  const PERFORMANCE_THRESHOLD = 300;
+const PERFORMANCE_THRESHOLD = 300;
+const LARGE_GRAPH_LAYOUT_THRESHOLD = 2000;
+const SIMPLE_LAYOUT_COLUMNS = 40;
+const SIMPLE_LAYOUT_X_SPACING = 240;
+const SIMPLE_LAYOUT_Y_SPACING = 120;
+
+function applySimpleGridLayout(
+  nodes: Node[],
+  executionMap: Map<string, WorkflowDAGNode>
+): Node[] {
+  const sortedNodes = [...nodes].sort((a, b) => {
+    const depthA =
+      (executionMap.get(a.id)?.workflow_depth as number | undefined) ?? 0;
+    const depthB =
+      (executionMap.get(b.id)?.workflow_depth as number | undefined) ?? 0;
+    if (depthA !== depthB) {
+      return depthA - depthB;
+    }
+    const startedA =
+      executionMap.get(a.id)?.started_at ?? "1970-01-01T00:00:00Z";
+    const startedB =
+      executionMap.get(b.id)?.started_at ?? "1970-01-01T00:00:00Z";
+    if (startedA !== startedB) {
+      return startedA.localeCompare(startedB);
+    }
+    return a.id.localeCompare(b.id);
+  });
+
+  const columns = Math.max(1, SIMPLE_LAYOUT_COLUMNS);
+
+  return sortedNodes.map((node, index) => {
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    return {
+      ...node,
+      position: {
+        x: column * SIMPLE_LAYOUT_X_SPACING,
+        y: row * SIMPLE_LAYOUT_Y_SPACING,
+      },
+    };
+  });
+}
+
+function decorateNodesWithViewMode(nodes: Node[], viewMode: string): Node[] {
+  return nodes.map((node) => ({
+    ...node,
+    data: {
+      ...(node.data as object),
+      viewMode,
+    },
+  }));
+}
+
+function decorateEdgesWithStatus(
+  edges: Edge[],
+  executionMap: Map<string, WorkflowDAGNode>
+): Edge[] {
+  return edges.map((edge) => {
+    const targetExecution = executionMap.get(edge.target);
+    if (!targetExecution) {
+      return edge;
+    }
+    const animated = targetExecution.status === "running";
+    return {
+      ...edge,
+      animated,
+      data: {
+        ...(edge.data as object),
+        status: targetExecution.status,
+        duration: targetExecution.duration_ms,
+        animated,
+      },
+    } as Edge;
+  });
+}
   const shouldUseVirtualizedDAG = useMemo(() => {
     return nodes.length > PERFORMANCE_THRESHOLD;
   }, [nodes.length]);
   const MAX_FOCUS_DEPTH = 2;
+
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(
+    searchQuery ?? ""
+  );
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery ?? "");
+    }, 300);
+
+    return () => {
+      window.clearTimeout(handle);
+    };
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (dagData === undefined) {
+      setInternalDagData(null);
+      hasInitialLayoutRef.current = false;
+    }
+  }, [workflowId, dagData]);
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -310,7 +496,9 @@ function WorkflowDAGViewerInner({
     }
 
     const edgesSnapshot = edgesRef.current;
-    const normalizedSearch = (searchQuery || "").trim().toLowerCase();
+    const normalizedSearch = (debouncedSearchQuery || "")
+      .trim()
+      .toLowerCase();
     const focusIds = focusMode
       ? new Set(focusedNodeIds ?? [])
       : new Set<string>();
@@ -562,7 +750,7 @@ function WorkflowDAGViewerInner({
       });
     }
   }, [
-    searchQuery,
+    debouncedSearchQuery,
     focusMode,
     focusedNodeIds,
     selectedAgent,
@@ -645,6 +833,9 @@ function WorkflowDAGViewerInner({
   // Handle layout change
   const handleLayoutChange = useCallback(
     async (newLayout: AllLayoutType) => {
+      if (largeGraphRef.current) {
+        return;
+      }
       if (newLayout === currentLayout) return;
 
       setIsApplyingLayout(true);
@@ -699,6 +890,24 @@ function WorkflowDAGViewerInner({
       const timeline = data.timeline || [];
       const { nodesForLayout, edgesForLayout, executionMap } =
         buildGraphElements(timeline);
+
+      if (largeGraphRef.current) {
+        const flowNodes = applySimpleGridLayout(
+          nodesForLayout,
+          executionMap
+        );
+        const nodesWithMode = decorateNodesWithViewMode(flowNodes, viewMode);
+        const edgesWithStatus = decorateEdgesWithStatus(
+          edgesForLayout,
+          executionMap
+        );
+        nodesRef.current = nodesWithMode;
+        edgesRef.current = edgesWithStatus;
+        setNodes(nodesWithMode);
+        setEdges(edgesWithStatus);
+        setVisualEpoch((epoch) => epoch + 1);
+        return;
+      }
 
       const existingIds = new Set(nodesRef.current.map((node) => node.id));
       const timelineIds = new Set(timeline.map((node) => node.execution_id));
@@ -812,19 +1021,27 @@ function WorkflowDAGViewerInner({
     const processDAGData = async () => {
       let data: WorkflowDAGResponse | null = null;
 
-      // Use external data if provided, otherwise fetch internally
-      if (dagData !== undefined) {
-        data = dagData;
+      if (effectiveDagData) {
+        data = effectiveDagData;
       } else if (shouldUseFallback) {
         try {
           setInternalLoading(true);
           setInternalError(null);
-          data = await getWorkflowDAG(workflowId);
+          const fetched = await getWorkflowDAG<
+            WorkflowDAGResponse | WorkflowDAGLightweightResponse
+          >(workflowId, { lightweight: true });
+
+          const normalized = isLightweightDAGResponse(fetched)
+            ? adaptLightweightResponse(fetched)
+            : fetched;
+
+          setInternalDagData(normalized);
+          data = normalized;
         } catch (err) {
           const errorMessage =
             (err as Error)?.message || "Failed to load workflow DAG";
           setInternalError(errorMessage);
-          setInternalLoading(false);
+          setInternalDagData(null);
           return;
         } finally {
           setInternalLoading(false);
@@ -841,9 +1058,35 @@ function WorkflowDAGViewerInner({
         // Determine the appropriate default layout based on graph size
         const nodeCount = timeline.length;
         const defaultLayout = layoutManager.getDefaultLayout(nodeCount);
+        const useSimpleLayout = nodeCount > LARGE_GRAPH_LAYOUT_THRESHOLD;
+        largeGraphRef.current = useSimpleLayout;
+        const { nodesForLayout, edgesForLayout, executionMap } =
+          buildGraphElements(timeline);
+
+        // For large graphs, build DeckGL data instead of React Flow layout
+        if (useSimpleLayout) {
+          const flowNodes = applySimpleGridLayout(
+            nodesForLayout,
+            executionMap
+          );
+          const nodesWithMode = decorateNodesWithViewMode(flowNodes, viewMode);
+          const edgesWithStatus = decorateEdgesWithStatus(
+            edgesForLayout,
+            executionMap
+          );
+          setNodes(nodesWithMode);
+          setEdges(edgesWithStatus);
+          nodesRef.current = nodesWithMode;
+          edgesRef.current = edgesWithStatus;
+          setVisualEpoch((epoch) => epoch + 1);
+          const deckData = buildDeckGraph(timeline);
+          setDeckGraphData(deckData);
+          hasInitialLayoutRef.current = true;
+          return; // Skip React Flow layout
+        }
 
         // Update current layout if it's still the initial "tree" value
-        if (currentLayout === "tree" && defaultLayout !== "tree") {
+        if (!useSimpleLayout && currentLayout === "tree" && defaultLayout !== "tree") {
           setCurrentLayout(defaultLayout);
         }
 
@@ -851,41 +1094,24 @@ function WorkflowDAGViewerInner({
         if (!hasInitialLayoutRef.current) {
           const layoutToUse =
             currentLayout === "tree" ? defaultLayout : currentLayout;
-          const { nodesForLayout, edgesForLayout, executionMap } =
-            buildGraphElements(timeline);
 
-          const { nodes: flowNodes, edges: flowEdges } =
+          let flowNodes: Node[];
+          let flowEdges: Edge[] = edgesForLayout;
+
+          const { nodes: layoutedNodes, edges: layoutedEdges } =
             await layoutManager.applyLayout(
               nodesForLayout,
               edgesForLayout,
               layoutToUse
             );
+          flowNodes = layoutedNodes;
+          flowEdges = layoutedEdges;
 
-          const nodesWithMode = flowNodes.map((node) => ({
-            ...node,
-            data: {
-              ...(node.data as object),
-              viewMode,
-            },
-          }));
-
-          const edgesWithStatus = flowEdges.map((edge) => {
-            const targetExecution = executionMap.get(edge.target);
-            if (!targetExecution) {
-              return edge;
-            }
-            const animated = targetExecution.status === "running";
-            return {
-              ...edge,
-              animated,
-              data: {
-                ...(edge.data as object),
-                status: targetExecution.status,
-                duration: targetExecution.duration_ms,
-                animated,
-              },
-            } as Edge;
-          });
+          const nodesWithMode = decorateNodesWithViewMode(flowNodes, viewMode);
+          const edgesWithStatus = decorateEdgesWithStatus(
+            flowEdges,
+            executionMap
+          );
 
           setNodes(nodesWithMode);
           setEdges(edgesWithStatus);
@@ -924,7 +1150,7 @@ function WorkflowDAGViewerInner({
     processDAGData();
   }, [
     workflowId,
-    dagData,
+    effectiveDagData,
     currentLayout,
     shouldUseFallback,
     layoutManager,
@@ -955,6 +1181,96 @@ function WorkflowDAGViewerInner({
     );
   }
 
+  const isLargeGraph = nodes.length > LARGE_GRAPH_LAYOUT_THRESHOLD;
+  const shouldUseDeckGL = nodes.length >= LARGE_GRAPH_LAYOUT_THRESHOLD;
+
+  // Handler for DeckGL node clicks - convert DeckGL node type to local type
+  const handleDeckNodeClick = useCallback(
+    (node: any) => {
+      // Ensure workflow_id is set
+      const localNode: WorkflowDAGNode = {
+        ...node,
+        workflow_id: node.workflow_id || workflowId,
+      };
+      setSelectedNode(localNode);
+      setSidebarOpen(true);
+    },
+    [workflowId]
+  );
+
+  // Handler for DeckGL node hover
+  const handleDeckNodeHover = useCallback(
+    (_node: any) => {
+      // Optional: Add hover state handling if needed
+    },
+    []
+  );
+
+  // Render DeckGL view for large graphs
+  if (shouldUseDeckGL && deckGraphData) {
+    const totalNodes =
+      effectiveDagData?.total_nodes ?? deckGraphData.nodes.length;
+    const displayedNodes =
+      effectiveDagData?.displayed_nodes ?? deckGraphData.nodes.length;
+    const hasTruncation = totalNodes > displayedNodes;
+
+    return (
+      <div className={cn("relative h-full w-full", className)}>
+        <div className="flex h-full w-full flex-col">
+          <div className="flex-1 overflow-hidden min-h-0">
+            <div className="relative flex h-full w-full flex-1 overflow-hidden min-h-0">
+              <WorkflowDeckGLView
+                nodes={deckGraphData.nodes}
+                edges={deckGraphData.edges}
+                onNodeClick={handleDeckNodeClick}
+                onNodeHover={handleDeckNodeHover}
+              />
+
+              {/* Agent Legend - positioned in top-left */}
+              <div className="absolute top-4 left-4 z-30">
+                <AgentLegend
+                  onAgentFilter={handleAgentFilter}
+                  selectedAgent={selectedAgent}
+                  compact={false}
+                  nodes={nodes}
+                />
+              </div>
+
+              {/* Large Graph Indicator - positioned in top-right */}
+              <div className="absolute top-4 right-4 z-30">
+                <Card className="bg-card/95 backdrop-blur-sm border-border shadow-lg">
+                  <CardContent className="p-3">
+                    <div className="flex items-center gap-2 text-sm">
+                      <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+                      <span className="font-medium text-foreground">
+                        Large Graph Mode
+                      </span>
+                      <span className="text-muted-foreground">
+                        {hasTruncation
+                          ? `(${formatNumberWithCommas(
+                              displayedNodes
+                            )} shown / ${formatNumberWithCommas(totalNodes)} total)`
+                          : `(${formatNumberWithCommas(totalNodes)} nodes)`}
+                      </span>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Node Detail Sidebar */}
+        <NodeDetailSidebar
+          node={selectedNode}
+          isOpen={sidebarOpen}
+          onClose={handleCloseSidebar}
+        />
+      </div>
+    );
+  }
+
+  // Render React Flow for normal-sized graphs
   return (
     <div className={cn("relative h-full w-full", className)}>
       <div className="flex h-full w-full flex-col">
@@ -973,14 +1289,20 @@ function WorkflowDAGViewerInner({
                 // Layout-related props
                 currentLayout={currentLayout}
                 onLayoutChange={handleLayoutChange}
-                availableLayouts={layoutManager.getAvailableLayouts(
-                  nodes.length
-                )}
-                isSlowLayout={(layout) => layoutManager.isSlowLayout(layout)}
+                availableLayouts={
+                  isLargeGraph
+                    ? []
+                    : layoutManager.getAvailableLayouts(nodes.length)
+                }
+                isSlowLayout={(layout) =>
+                  isLargeGraph ? false : layoutManager.isSlowLayout(layout)
+                }
                 getLayoutDescription={(layout) =>
                   layoutManager.getLayoutDescription(layout)
                 }
-                isLargeGraph={layoutManager.isLargeGraph(nodes.length)}
+                isLargeGraph={
+                  isLargeGraph || layoutManager.isLargeGraph(nodes.length)
+                }
                 isApplyingLayout={isApplyingLayout}
                 layoutProgress={layoutProgress}
                 // Agent filtering props
