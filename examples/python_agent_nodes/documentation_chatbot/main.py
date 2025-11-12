@@ -30,10 +30,9 @@ from schemas import (
 
 app = Agent(
     node_id="documentation-chatbot",
-    agentfield_server=f"http://{os.getenv('AGENTFIELD_SERVER', 'localhost:8080')}",
+    agentfield_server=f"{os.getenv('AGENTFIELD_SERVER')}",
     ai_config=AIConfig(
         model=os.getenv("AI_MODEL", "openrouter/openai/gpt-4o-mini"),
-        temperature=0.2,
     ),
 )
 
@@ -90,7 +89,7 @@ async def ingest_folder(
                 "relative_path": relative_path,
                 "namespace": namespace,
                 "file_size": len(full_text),
-            }
+            },
         )
 
         # Create chunks
@@ -179,7 +178,10 @@ def _deduplicate_results(results: List[RetrievalResult]) -> List[RetrievalResult
     by_source: Dict[str, RetrievalResult] = {}
 
     for result in results:
-        if result.source not in by_source or result.score > by_source[result.source].score:
+        if (
+            result.source not in by_source
+            or result.score > by_source[result.source].score
+        ):
             by_source[result.source] = result
 
     # Sort by score descending, limit to top 15
@@ -253,8 +255,7 @@ def _calculate_document_score(chunks: List[RetrievalResult]) -> float:
 
 
 async def _aggregate_chunks_to_documents(
-    chunks: List[RetrievalResult],
-    top_n: int = 5
+    chunks: List[RetrievalResult], top_n: int = 5
 ) -> List[DocumentContext]:
     """
     Group chunks by document, fetch full documents, and rank by relevance.
@@ -276,7 +277,9 @@ async def _aggregate_chunks_to_documents(
         log_info("[aggregate_chunks_to_documents] No document keys found in chunks")
         return []
 
-    log_info(f"[aggregate_chunks_to_documents] Found {len(by_document)} unique documents")
+    log_info(
+        f"[aggregate_chunks_to_documents] Found {len(by_document)} unique documents"
+    )
 
     # Fetch full documents and build DocumentContext objects
     document_contexts: List[DocumentContext] = []
@@ -317,9 +320,7 @@ async def _aggregate_chunks_to_documents(
 
     # Sort by relevance score and return top N
     ranked_documents = sorted(
-        document_contexts,
-        key=lambda x: x.relevance_score,
-        reverse=True
+        document_contexts, key=lambda x: x.relevance_score, reverse=True
     )[:top_n]
 
     log_info(
@@ -345,7 +346,9 @@ def _format_documents_for_synthesis(documents: Sequence[DocumentContext]) -> str
     return "\n".join(blocks)
 
 
-def _build_citations_from_documents(documents: Sequence[DocumentContext]) -> List[Citation]:
+def _build_citations_from_documents(
+    documents: Sequence[DocumentContext],
+) -> List[Citation]:
     """Convert document contexts to citation objects."""
     citations: List[Citation] = []
 
@@ -417,8 +420,7 @@ async def _retrieve_for_query(
 
     # Search vector store
     raw_hits = await global_memory.similarity_search(
-        query_embedding=embedding,
-        top_k=top_k * 2  # Get more to account for filtering
+        query_embedding=embedding, top_k=top_k * 2  # Get more to account for filtering
     )
 
     # Filter by namespace and score
@@ -462,8 +464,7 @@ async def parallel_retrieve(
 
     # Execute all retrievals in parallel
     tasks = [
-        _retrieve_for_query(query, namespace, top_k, min_score)
-        for query in queries
+        _retrieve_for_query(query, namespace, top_k, min_score) for query in queries
     ]
     all_results_lists = await asyncio.gather(*tasks)
 
@@ -472,7 +473,9 @@ async def parallel_retrieve(
     for results in all_results_lists:
         all_results.extend(results)
 
-    log_info(f"[parallel_retrieve] Retrieved {len(all_results)} total chunks before deduplication")
+    log_info(
+        f"[parallel_retrieve] Retrieved {len(all_results)} total chunks before deduplication"
+    )
 
     # Deduplicate and rank
     deduplicated = _deduplicate_results(all_results)
@@ -509,7 +512,12 @@ async def synthesize_answer(
     citations = _build_citations(results)
 
     # Create a mapping of keys to sources for the prompt
-    key_map = "\n".join([f"[{c.key}] = {c.relative_path}:{c.start_line}-{c.end_line}" for c in citations])
+    key_map = "\n".join(
+        [
+            f"[{c.key}] = {c.relative_path}:{c.start_line}-{c.end_line}"
+            for c in citations
+        ]
+    )
 
     system_prompt = (
         "You are a precise documentation assistant with SELF-AWARENESS capabilities.\n\n"
@@ -584,7 +592,9 @@ async def qa_answer(
 
     # Step 1: Plan diverse queries
     plan = await plan_queries(question)
-    log_info(f"[qa_answer] Generated {len(plan.queries)} queries with strategy: {plan.strategy}")
+    log_info(
+        f"[qa_answer] Generated {len(plan.queries)} queries with strategy: {plan.strategy}"
+    )
 
     # Step 2: Parallel retrieval
     results = await parallel_retrieve(
@@ -624,8 +634,10 @@ async def qa_answer(
         all_results = results + additional_results
         merged_results = _deduplicate_results(all_results)
 
-        log_info(f"[qa_answer] Refinement retrieved {len(additional_results)} new chunks, "
-                f"merged to {len(merged_results)} total")
+        log_info(
+            f"[qa_answer] Refinement retrieved {len(additional_results)} new chunks, "
+            f"merged to {len(merged_results)} total"
+        )
 
         # Synthesize again with refinement flag
         answer = await synthesize_answer(question, merged_results, is_refinement=True)
@@ -664,7 +676,9 @@ async def qa_answer_with_documents(
 
     # Step 1: Plan diverse queries
     plan = await plan_queries(question)
-    log_info(f"[qa_answer_with_documents] Generated {len(plan.queries)} queries with strategy: {plan.strategy}")
+    log_info(
+        f"[qa_answer_with_documents] Generated {len(plan.queries)} queries with strategy: {plan.strategy}"
+    )
 
     # Step 2: Parallel chunk retrieval
     chunk_results = await parallel_retrieve(
@@ -752,7 +766,9 @@ async def qa_answer_with_documents(
             response.citations = citations
         answer = response
     else:
-        response_dict = response if isinstance(response, dict) else response.model_dump()
+        response_dict = (
+            response if isinstance(response, dict) else response.model_dump()
+        )
         response_dict["citations"] = citations
         answer = DocAnswer.model_validate(response_dict)
 
@@ -763,7 +779,9 @@ async def qa_answer_with_documents(
 
     # Step 5: Optional refinement (max 1 iteration)
     if answer.needs_more and answer.missing_topics:
-        log_info(f"[qa_answer_with_documents] Refinement needed for: {answer.missing_topics}")
+        log_info(
+            f"[qa_answer_with_documents] Refinement needed for: {answer.missing_topics}"
+        )
 
         # Generate targeted queries for missing topics
         refinement_queries = []
@@ -781,16 +799,23 @@ async def qa_answer_with_documents(
 
         # Merge and aggregate to documents
         all_chunks = chunk_results + additional_chunks
-        merged_documents = await _aggregate_chunks_to_documents(all_chunks, top_n=top_documents)
+        merged_documents = await _aggregate_chunks_to_documents(
+            all_chunks, top_n=top_documents
+        )
 
-        log_info(f"[qa_answer_with_documents] Refinement found {len(merged_documents)} total documents")
+        log_info(
+            f"[qa_answer_with_documents] Refinement found {len(merged_documents)} total documents"
+        )
 
         # Synthesize again with more lenient prompt
         context_text = _format_documents_for_synthesis(merged_documents)
         citations = _build_citations_from_documents(merged_documents)
         key_map = "\n".join([f"[{c.key}] = {c.relative_path}" for c in citations])
 
-        system_prompt_refined = system_prompt + "\n\nREFINEMENT MODE: This is a second attempt. Be more lenient - if you have ANY useful info, set needs_more=False."
+        system_prompt_refined = (
+            system_prompt
+            + "\n\nREFINEMENT MODE: This is a second attempt. Be more lenient - if you have ANY useful info, set needs_more=False."
+        )
 
         user_prompt_refined = (
             f"Question: {question}\n\n"
@@ -812,7 +837,9 @@ async def qa_answer_with_documents(
                 response.citations = citations
             answer = response
         else:
-            response_dict = response if isinstance(response, dict) else response.model_dump()
+            response_dict = (
+                response if isinstance(response, dict) else response.model_dump()
+            )
             response_dict["citations"] = citations
             answer = DocAnswer.model_validate(response_dict)
 
@@ -856,7 +883,9 @@ if __name__ == "__main__":
     print("  • /reasoners/parallel_retrieve → Parallel chunk retrieval")
     print("  • /reasoners/synthesize_answer → Self-aware synthesis (chunk-based)")
     print("  • /reasoners/qa_answer → Chunk-based QA orchestrator")
-    print("  • /reasoners/qa_answer_with_documents → 🆕 Document-aware QA (RECOMMENDED)")
+    print(
+        "  • /reasoners/qa_answer_with_documents → 🆕 Document-aware QA (RECOMMENDED)"
+    )
     print("\n✨ Features:")
     print("  - Parallel retrieval for 3x speed improvement")
     print("  - Self-aware synthesis (no separate review)")
