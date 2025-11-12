@@ -46,9 +46,11 @@ import random
 import statistics
 import sys
 import time
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+import httpx
 
 SUCCESS_STATUSES = {"success", "succeeded", "completed"}
 FAILURE_STATUSES = {"error", "failed", "timeout", "cancelled"}
@@ -60,8 +62,6 @@ DEFAULT_METRIC_KEYS = [
     "agentfield_gateway_queue_depth",
     "agentfield_worker_inflight",
 ]
-
-import httpx
 
 
 def parse_header(header: str) -> Tuple[str, str]:

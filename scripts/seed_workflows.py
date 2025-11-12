@@ -22,7 +22,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 
 # --- Data classes ---------------------------------------------------------
@@ -432,7 +432,6 @@ def generate_scenario(
 
     region = random.choice(REGIONS)
     objective = random.choice(OBJECTIVES)
-    deliverable = random.choice(DELIVERABLES)
     workflow_name = f"{objective} – {region}"
     tags = [
         "deep_research",
@@ -899,9 +898,8 @@ def seed_database(args: argparse.Namespace) -> List[Tuple[str, str, int]]:
         conn.execute("BEGIN")
 
         ensure_agent_nodes(conn, args.team_id)
-        purged = 0
         if args.purge_prefix:
-            purged = purge_workflows_with_prefix(conn, args.workflow_prefix)
+            purge_workflows_with_prefix(conn, args.workflow_prefix)
 
         inserted: List[Tuple[str, str, int]] = []
         base_start = datetime.utcnow() - timedelta(hours=args.start_hours_ago)

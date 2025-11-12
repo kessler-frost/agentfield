@@ -10,10 +10,9 @@ import asyncio
 import inspect
 import json
 import sys
-from typing import Any, Callable, Dict, List, Optional, Type, get_type_hints
+from typing import Any, Callable, Dict, List, Optional, get_type_hints
 
-from agentfield.logger import log_error, log_info, log_success, log_warn
-from pydantic import BaseModel, ValidationError
+from agentfield.logger import log_error, log_warn
 
 
 class AgentCLI:
@@ -111,14 +110,14 @@ class AgentCLI:
             param_type = type_hints.get(param_name, str)
 
             # Handle different parameter types
-            if param_type == bool:
+            if param_type is bool:
                 # Boolean flags
                 parser.add_argument(
                     f"--{param_name}",
                     action="store_true",
                     help=f"{param_name} (boolean flag)",
                 )
-            elif param_type == int:
+            elif param_type is int:
                 parser.add_argument(
                     f"--{param_name}",
                     type=int,
@@ -130,7 +129,7 @@ class AgentCLI:
                     ),
                     help=f"{param_name} (integer)",
                 )
-            elif param_type == float:
+            elif param_type is float:
                 parser.add_argument(
                     f"--{param_name}",
                     type=float,
