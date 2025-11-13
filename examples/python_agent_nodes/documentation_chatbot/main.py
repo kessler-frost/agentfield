@@ -40,7 +40,7 @@ app = Agent(
 # ========================= Ingestion Skill (Unchanged) =========================
 
 
-@app.skill()
+@app.reasoner()
 async def ingest_folder(
     folder_path: str,
     namespace: str = "documentation",
