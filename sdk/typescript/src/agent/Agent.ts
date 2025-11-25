@@ -283,7 +283,7 @@ export class Agent {
         input_schema: r.options?.inputSchema ?? {},
         output_schema: r.options?.outputSchema ?? {},
         memory_config: r.options?.memoryConfig ?? {
-          auto_inject: [],
+          auto_inject: [] as string[],
           memory_retention: '',
           cache_results: false
         },
@@ -304,12 +304,13 @@ export class Agent {
         this.config.publicUrl ?? `http://${hostForUrl ?? '127.0.0.1'}:${port}`;
 
       await this.agentFieldClient.register({
-        nodeId: this.config.nodeId,
+        id: this.config.nodeId,
         version: this.config.version,
+        base_url: publicUrl,
+        public_url: publicUrl,
+        deployment_type: 'long_running',
         reasoners,
-        skills,
-        baseUrl: publicUrl,
-        publicUrl
+        skills
       });
     } catch (err) {
       if (!this.config.devMode) {

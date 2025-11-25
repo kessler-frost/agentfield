@@ -22,7 +22,7 @@ export class AgentRouter {
     handler: ReasonerHandler<TInput, TOutput>,
     options?: ReasonerOptions
   ) {
-    const fullName = this.prefix ? `${this.prefix}/${name}` : name;
+    const fullName = this.prefix ? `${sanitize(this.prefix)}_${name}` : name;
     this.reasoners.push({ name: fullName, handler, options });
     return this;
   }
@@ -32,8 +32,12 @@ export class AgentRouter {
     handler: SkillHandler<TInput, TOutput>,
     options?: SkillOptions
   ) {
-    const fullName = this.prefix ? `${this.prefix}/${name}` : name;
+    const fullName = this.prefix ? `${sanitize(this.prefix)}_${name}` : name;
     this.skills.push({ name: fullName, handler, options });
     return this;
   }
+}
+
+function sanitize(value: string) {
+  return value.replace(/[^0-9a-zA-Z]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
 }

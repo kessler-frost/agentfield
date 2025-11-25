@@ -20,8 +20,8 @@ describe('Agent', () => {
     const agent = new Agent({ nodeId: 'test-agent', devMode: true });
     agent.includeRouter(router);
 
-    expect(agent.reasoners.all().map((r) => r.name)).toContain('simulation/run');
-    expect(agent.skills.all().map((s) => s.name)).toContain('simulation/format');
+    expect(agent.reasoners.all().map((r) => r.name)).toContain('simulation_run');
+    expect(agent.skills.all().map((s) => s.name)).toContain('simulation_format');
   });
 
   it('calls local reasoner via agent.call when target matches node id', async () => {
