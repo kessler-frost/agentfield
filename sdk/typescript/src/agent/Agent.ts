@@ -126,8 +126,14 @@ export class Agent {
     if (!agentId || agentId === this.config.nodeId) {
       const local = this.reasoners.get(name);
       if (!local) throw new Error(`Reasoner not found: ${name}`);
-      const metadata = ExecutionContext.getCurrent()?.metadata ?? {
-        executionId: randomUUID()
+      const parentMetadata = ExecutionContext.getCurrent()?.metadata;
+      const runId = parentMetadata?.runId ?? parentMetadata?.executionId ?? randomUUID();
+      const metadata = {
+        ...parentMetadata,
+        executionId: randomUUID(),
+        parentExecutionId: parentMetadata?.executionId,
+        runId,
+        workflowId: parentMetadata?.workflowId ?? runId
       };
       const dummyReq = {} as express.Request;
       const dummyRes = {} as express.Response;
@@ -141,30 +147,64 @@ export class Agent {
         res: dummyRes,
         agent: this
       });
-      return ExecutionContext.run(execCtx, () =>
-        local.handler(
-          new ReasonerContext({
-            input,
-            executionId: execCtx.metadata.executionId,
-            runId: execCtx.metadata.runId,
-            sessionId: execCtx.metadata.sessionId,
-            actorId: execCtx.metadata.actorId,
-            workflowId: execCtx.metadata.workflowId,
-            parentExecutionId: execCtx.metadata.parentExecutionId,
-            callerDid: execCtx.metadata.callerDid,
-            targetDid: execCtx.metadata.targetDid,
-            agentNodeDid: execCtx.metadata.agentNodeDid,
-            req: dummyReq,
-            res: dummyRes,
-            agent: this,
-            aiClient: this.aiClient,
-            memory: this.getMemoryInterface(execCtx.metadata)
-          })
-        )
-      );
+      const startTime = Date.now();
+
+      const emitEvent = async (status: 'running' | 'succeeded' | 'failed', payload: any) => {
+        await this.agentFieldClient.publishWorkflowEvent({
+          executionId: execCtx.metadata.executionId,
+          runId: execCtx.metadata.runId ?? execCtx.metadata.executionId,
+          workflowId: execCtx.metadata.workflowId,
+          reasonerId: name,
+          agentNodeId: this.config.nodeId,
+          status,
+          parentExecutionId: execCtx.metadata.parentExecutionId,
+          parentWorkflowId: execCtx.metadata.workflowId,
+          inputData: status === 'running' ? input : undefined,
+          result: status === 'succeeded' ? payload : undefined,
+          error: status === 'failed' ? (payload?.message ?? String(payload)) : undefined,
+          durationMs: status === 'running' ? undefined : Date.now() - startTime
+        });
+      };
+
+      await emitEvent('running', null);
+
+      return ExecutionContext.run(execCtx, async () => {
+        try {
+          const result = await local.handler(
+            new ReasonerContext({
+              input,
+              executionId: execCtx.metadata.executionId,
+              runId: execCtx.metadata.runId,
+              sessionId: execCtx.metadata.sessionId,
+              actorId: execCtx.metadata.actorId,
+              workflowId: execCtx.metadata.workflowId,
+              parentExecutionId: execCtx.metadata.parentExecutionId,
+              callerDid: execCtx.metadata.callerDid,
+              targetDid: execCtx.metadata.targetDid,
+              agentNodeDid: execCtx.metadata.agentNodeDid,
+              req: dummyReq,
+              res: dummyRes,
+              agent: this,
+              aiClient: this.aiClient,
+              memory: this.getMemoryInterface(execCtx.metadata)
+            })
+          );
+          await emitEvent('succeeded', result);
+          return result;
+        } catch (err) {
+          await emitEvent('failed', err);
+          throw err;
+        }
+      });
     }
 
-    return this.agentFieldClient.execute(target, input);
+    const metadata = ExecutionContext.getCurrent()?.metadata;
+    return this.agentFieldClient.execute(target, input, {
+      runId: metadata?.runId ?? metadata?.executionId,
+      parentExecutionId: metadata?.executionId,
+      sessionId: metadata?.sessionId,
+      actorId: metadata?.actorId
+    });
   }
 
   private registerDefaultRoutes() {
@@ -270,9 +310,11 @@ export class Agent {
   }
 
   private buildMetadata(req: express.Request) {
+    const executionIdHeader = req.headers['x-execution-id'] as string | undefined;
+    const runIdHeader = req.headers['x-run-id'] as string | undefined;
     return {
-      executionId: (req.headers['x-execution-id'] as string) ?? randomUUID(),
-      runId: req.headers['x-run-id'] as string | undefined,
+      executionId: executionIdHeader ?? randomUUID(),
+      runId: runIdHeader ?? executionIdHeader ?? undefined,
       sessionId: req.headers['x-session-id'] as string | undefined,
       actorId: req.headers['x-actor-id'] as string | undefined,
       workflowId: req.headers['x-workflow-id'] as string | undefined,
