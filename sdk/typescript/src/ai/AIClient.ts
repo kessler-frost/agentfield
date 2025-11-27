@@ -1,4 +1,4 @@
-import { generateText, streamText, type StreamTextResult } from 'ai';
+import { embed, embedMany, generateText, streamText, type StreamTextResult } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import type { ZodSchema } from 'zod';
@@ -14,6 +14,11 @@ export interface AIRequestOptions {
 }
 
 export type AIStream = AsyncIterable<string>;
+
+export interface AIEmbeddingOptions {
+  model?: string;
+  provider?: AIConfig['provider'];
+}
 
 export class AIClient {
   private readonly config: AIConfig;
@@ -54,6 +59,24 @@ export class AIClient {
     return streamResult.textStream;
   }
 
+  async embed(value: string, options: AIEmbeddingOptions = {}) {
+    const model = this.buildEmbeddingModel(options);
+    const result = await embed({
+      model: model as any,
+      value
+    } as any);
+    return (result as any).embedding as number[];
+  }
+
+  async embedMany(values: string[], options: AIEmbeddingOptions = {}) {
+    const model = this.buildEmbeddingModel(options);
+    const result = await embedMany({
+      model: model as any,
+      values
+    } as any);
+    return (result as any).embeddings as number[][];
+  }
+
   private buildModel(options: AIRequestOptions) {
     const provider = options.provider ?? this.config.provider ?? 'openai';
     const modelName = options.model ?? this.config.model ?? 'gpt-4o';
@@ -72,5 +95,25 @@ export class AIClient {
       baseURL: this.config.baseUrl
     });
     return openai(modelName) as any;
+  }
+
+  private buildEmbeddingModel(options: AIEmbeddingOptions) {
+    const provider = options.provider ?? this.config.provider ?? 'openai';
+    const modelName = options.model ?? this.config.embeddingModel ?? 'text-embedding-3-small';
+
+    if (provider === 'anthropic') {
+      throw new Error('Embedding generation is not supported for Anthropic provider');
+    }
+
+    const openai = createOpenAI({
+      apiKey: this.config.apiKey,
+      baseURL: this.config.baseUrl
+    }) as any;
+
+    if (typeof openai.embedding !== 'function') {
+      throw new Error('Embedding model is not available for the configured provider');
+    }
+
+    return openai.embedding(modelName) as any;
   }
 }

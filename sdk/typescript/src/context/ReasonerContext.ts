@@ -5,6 +5,7 @@ import type { MemoryInterface } from '../memory/MemoryInterface.js';
 import type { Agent } from '../agent/Agent.js';
 import type { WorkflowReporter } from '../workflow/WorkflowReporter.js';
 import type { DiscoveryOptions } from '../types/agent.js';
+import type { DidInterface } from '../did/DidInterface.js';
 
 export class ReasonerContext<TInput = any> {
   readonly input: TInput;
@@ -23,6 +24,7 @@ export class ReasonerContext<TInput = any> {
   readonly aiClient: AIClient;
   readonly memory: MemoryInterface;
   readonly workflow: WorkflowReporter;
+  readonly did: DidInterface;
 
   constructor(params: {
     input: TInput;
@@ -41,6 +43,7 @@ export class ReasonerContext<TInput = any> {
     aiClient: AIClient;
     memory: MemoryInterface;
     workflow: WorkflowReporter;
+    did: DidInterface;
   }) {
     this.input = params.input;
     this.executionId = params.executionId;
@@ -58,6 +61,7 @@ export class ReasonerContext<TInput = any> {
     this.aiClient = params.aiClient;
     this.memory = params.memory;
     this.workflow = params.workflow;
+    this.did = params.did;
   }
 
   ai(prompt: string, options?: AIRequestOptions) {
@@ -97,6 +101,7 @@ export function getCurrentContext<TInput = any>(): ReasonerContext<TInput> | und
     agent,
     aiClient: agent.getAIClient(),
     memory: agent.getMemoryInterface(metadata),
-    workflow: agent.getWorkflowReporter(metadata)
+    workflow: agent.getWorkflowReporter(metadata),
+    did: agent.getDidInterface(metadata, input)
   });
 }

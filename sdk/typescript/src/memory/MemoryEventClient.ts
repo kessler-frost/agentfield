@@ -9,9 +9,11 @@ export class MemoryEventClient {
   private handlers: MemoryEventHandler[] = [];
   private reconnectDelay = 1000;
   private closed = false;
+  private readonly headers: Record<string, string>;
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string, headers?: Record<string, string | number | boolean | undefined>) {
     this.url = `${baseUrl.replace(/^http/, 'ws')}/api/v1/memory/events/ws`;
+    this.headers = this.buildForwardHeaders(headers ?? {});
   }
 
   start() {
@@ -29,7 +31,7 @@ export class MemoryEventClient {
   }
 
   private connect() {
-    this.ws = new WebSocket(this.url);
+    this.ws = new WebSocket(this.url, { headers: this.headers });
 
     this.ws.on('open', () => {
       this.reconnectDelay = 1000;
@@ -57,5 +59,18 @@ export class MemoryEventClient {
       this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
       this.connect();
     }, this.reconnectDelay);
+  }
+
+  private buildForwardHeaders(headers: Record<string, any>): Record<string, string> {
+    const allowed = new Set(['authorization', 'cookie']);
+    const sanitized: Record<string, string> = {};
+    Object.entries(headers).forEach(([key, value]) => {
+      if (value === undefined || value === null) return;
+      const lower = key.toLowerCase();
+      if (lower.startsWith('x-') || allowed.has(lower)) {
+        sanitized[key] = typeof value === 'string' ? value : String(value);
+      }
+    });
+    return sanitized;
   }
 }

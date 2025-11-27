@@ -20,23 +20,29 @@ export interface ExecutionStatusUpdate {
 export class AgentFieldClient {
   private readonly http: AxiosInstance;
   private readonly config: AgentConfig;
+  private readonly defaultHeaders: Record<string, string>;
 
   constructor(config: AgentConfig) {
     const baseURL = (config.agentFieldUrl ?? 'http://localhost:8080').replace(/\/$/, '');
     this.http = axios.create({ baseURL });
     this.config = config;
+    this.defaultHeaders = this.sanitizeHeaders(config.defaultHeaders ?? {});
   }
 
   async register(payload: any) {
-    await this.http.post('/api/v1/nodes/register', payload);
+    await this.http.post('/api/v1/nodes/register', payload, { headers: this.mergeHeaders() });
   }
 
   async heartbeat(status: 'starting' | 'ready' | 'degraded' | 'offline' = 'ready'): Promise<HealthStatus> {
     const nodeId = this.config.nodeId;
-    const res = await this.http.post(`/api/v1/nodes/${nodeId}/heartbeat`, {
-      status,
-      timestamp: new Date().toISOString()
-    });
+    const res = await this.http.post(
+      `/api/v1/nodes/${nodeId}/heartbeat`,
+      {
+        status,
+        timestamp: new Date().toISOString()
+      },
+      { headers: this.mergeHeaders() }
+    );
     return res.data as HealthStatus;
   }
 
@@ -71,7 +77,7 @@ export class AgentFieldClient {
       {
         input
       },
-      { headers }
+      { headers: this.mergeHeaders(headers) }
     );
     return (res.data?.result as T) ?? res.data;
   }
@@ -106,7 +112,7 @@ export class AgentFieldClient {
       duration_ms: event.durationMs
     };
 
-    await this.http.post('/api/v1/workflow/executions/events', payload).catch(() => {
+    await this.http.post('/api/v1/workflow/executions/events', payload, { headers: this.mergeHeaders() }).catch(() => {
       // Best-effort; avoid throwing to keep agent execution resilient
     });
   }
@@ -124,7 +130,7 @@ export class AgentFieldClient {
       progress: update.progress !== undefined ? Math.round(update.progress) : undefined
     };
 
-    await this.http.post(`/api/v1/executions/${executionId}/status`, payload);
+    await this.http.post(`/api/v1/executions/${executionId}/status`, payload, { headers: this.mergeHeaders() });
   }
 
   async discoverCapabilities(options: DiscoveryOptions = {}): Promise<DiscoveryResult> {
@@ -168,10 +174,10 @@ export class AgentFieldClient {
 
     const res = await this.http.get('/api/v1/discovery/capabilities', {
       params,
-      headers: {
-        Accept: format === 'xml' ? 'application/xml' : 'application/json',
-        ...(options.headers ?? {})
-      },
+      headers: this.mergeHeaders({
+        ...(options.headers ?? {}),
+        Accept: format === 'xml' ? 'application/xml' : 'application/json'
+      }),
       responseType: format === 'xml' ? 'text' : 'json',
       transformResponse: (data) => data // preserve raw body for xml
     });
@@ -247,6 +253,22 @@ export class AgentFieldClient {
       discoveredAt: String(payload?.discovered_at ?? ''),
       reasoners: (payload?.reasoners ?? []).map(toCap),
       skills: (payload?.skills ?? []).map(toCap)
+    };
+  }
+
+  private sanitizeHeaders(headers: Record<string, any>): Record<string, string> {
+    const sanitized: Record<string, string> = {};
+    Object.entries(headers).forEach(([key, value]) => {
+      if (value === undefined || value === null) return;
+      sanitized[key] = typeof value === 'string' ? value : String(value);
+    });
+    return sanitized;
+  }
+
+  private mergeHeaders(headers?: Record<string, any>): Record<string, string> {
+    return {
+      ...this.defaultHeaders,
+      ...this.sanitizeHeaders(headers ?? {})
     };
   }
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Agent } from '../src/agent/Agent.js';
 import { AgentRouter } from '../src/router/AgentRouter.js';
+import type { MemoryChangeEvent } from '../src/memory/MemoryInterface.js';
 
 describe('Agent', () => {
   it('registers reasoners and skills directly', () => {
@@ -30,5 +31,35 @@ describe('Agent', () => {
 
     const result = await agent.call('local.echo', { msg: 'hi' });
     expect(result).toEqual({ echo: 'hi' });
+  });
+
+  it('filters memory events by scope when dispatching watchers', () => {
+    const agent = new Agent({ nodeId: 'watcher', devMode: true });
+    const captured: MemoryChangeEvent[] = [];
+
+    agent.watchMemory('order.*', (event) => captured.push(event), { scope: 'workflow' });
+    agent.watchMemory('order.*', (event) => captured.push({ ...event, agentId: 'any' }));
+
+    const event1: MemoryChangeEvent = {
+      key: 'order.1',
+      data: {},
+      scope: 'workflow',
+      scopeId: 'wf-1',
+      timestamp: new Date().toISOString(),
+      agentId: 'watcher'
+    };
+    const event2: MemoryChangeEvent = {
+      ...event1,
+      scope: 'session',
+      scopeId: 's-1'
+    };
+
+    (agent as any).dispatchMemoryEvent(event1);
+    (agent as any).dispatchMemoryEvent(event2);
+
+    expect(captured.length).toBe(3);
+    expect(captured[0].scope).toBe('workflow');
+    expect(captured[1].scope).toBe('workflow');
+    expect(captured[2].scope).toBe('session');
   });
 });

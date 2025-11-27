@@ -14,7 +14,13 @@ import { AIClient } from '../ai/AIClient.js';
 import { AgentFieldClient } from '../client/AgentFieldClient.js';
 import { MemoryClient } from '../memory/MemoryClient.js';
 import { MemoryEventClient } from '../memory/MemoryEventClient.js';
-import { MemoryInterface, type MemoryChangeEvent, type MemoryWatchHandler } from '../memory/MemoryInterface.js';
+import {
+  MemoryInterface,
+  type MemoryChangeEvent,
+  type MemoryWatchHandler
+} from '../memory/MemoryInterface.js';
+import { DidClient } from '../did/DidClient.js';
+import { DidInterface } from '../did/DidInterface.js';
 import { matchesPattern } from '../utils/pattern.js';
 import { WorkflowReporter } from '../workflow/WorkflowReporter.js';
 import type { DiscoveryOptions } from '../types/agent.js';
@@ -30,13 +36,15 @@ export class Agent {
   private readonly agentFieldClient: AgentFieldClient;
   private readonly memoryClient: MemoryClient;
   private readonly memoryEventClient: MemoryEventClient;
-  private readonly memoryWatchers: Array<{ pattern: string; handler: MemoryWatchHandler }> = [];
+  private readonly didClient: DidClient;
+  private readonly memoryWatchers: Array<{ pattern: string; handler: MemoryWatchHandler; scope?: string; scopeId?: string }> = [];
 
   constructor(config: AgentConfig) {
     this.config = {
       port: 8001,
       agentFieldUrl: 'http://localhost:8080',
       host: '0.0.0.0',
+      didEnabled: config.didEnabled ?? true,
       ...config
     };
 
@@ -45,8 +53,9 @@ export class Agent {
 
     this.aiClient = new AIClient(this.config.aiConfig);
     this.agentFieldClient = new AgentFieldClient(this.config);
-    this.memoryClient = new MemoryClient(this.config.agentFieldUrl!);
-    this.memoryEventClient = new MemoryEventClient(this.config.agentFieldUrl!);
+    this.memoryClient = new MemoryClient(this.config.agentFieldUrl!, this.config.defaultHeaders);
+    this.memoryEventClient = new MemoryEventClient(this.config.agentFieldUrl!, this.config.defaultHeaders);
+    this.didClient = new DidClient(this.config.agentFieldUrl!, this.config.defaultHeaders);
     this.memoryEventClient.onEvent((event) => this.dispatchMemoryEvent(event));
 
     this.registerDefaultRoutes();
@@ -75,9 +84,11 @@ export class Agent {
     this.skills.includeRouter(router);
   }
 
-  watchMemory(pattern: string | string[], handler: MemoryWatchHandler) {
+  watchMemory(pattern: string | string[], handler: MemoryWatchHandler, options?: { scope?: string; scopeId?: string }) {
     const patterns = Array.isArray(pattern) ? pattern : [pattern];
-    patterns.forEach((p) => this.memoryWatchers.push({ pattern: p, handler }));
+    patterns.forEach((p) =>
+      this.memoryWatchers.push({ pattern: p, handler, scope: options?.scope, scopeId: options?.scopeId })
+    );
     this.memoryEventClient.start();
   }
 
@@ -100,6 +111,7 @@ export class Agent {
     return new MemoryInterface({
       client: this.memoryClient,
       eventClient: this.memoryEventClient,
+      aiClient: this.aiClient,
       defaultScope,
       defaultScopeId,
       metadata: {
@@ -123,6 +135,18 @@ export class Agent {
       runId: metadata.runId,
       workflowId: metadata.workflowId,
       agentNodeId: this.config.nodeId
+    });
+  }
+
+  getDidInterface(metadata: ExecutionMetadata, defaultInput?: any) {
+    return new DidInterface({
+      client: this.didClient,
+      metadata: {
+        ...metadata,
+        agentNodeDid: metadata.agentNodeDid ?? this.config.defaultHeaders?.['X-Agent-Node-DID']?.toString()
+      },
+      enabled: Boolean(this.config.didEnabled),
+      defaultInput
     });
   }
 
@@ -220,7 +244,8 @@ export class Agent {
               agent: this,
               aiClient: this.aiClient,
               memory: this.getMemoryInterface(execCtx.metadata),
-              workflow: this.getWorkflowReporter(execCtx.metadata)
+              workflow: this.getWorkflowReporter(execCtx.metadata),
+              did: this.getDidInterface(execCtx.metadata, input)
             })
           );
           await emitEvent('succeeded', result);
@@ -307,7 +332,8 @@ export class Agent {
           agent: this,
           aiClient: this.aiClient,
           memory: this.getMemoryInterface(metadata),
-          workflow: this.getWorkflowReporter(metadata)
+          workflow: this.getWorkflowReporter(metadata),
+          did: this.getDidInterface(metadata, req.body)
         });
 
         const result = await reasoner.handler(ctx);
@@ -339,7 +365,8 @@ export class Agent {
           res,
           agent: this,
           memory: this.getMemoryInterface(metadata),
-          workflow: this.getWorkflowReporter(metadata)
+          workflow: this.getWorkflowReporter(metadata),
+          did: this.getDidInterface(metadata, req.body)
         });
 
         const result = skill.handler(ctx);
@@ -365,7 +392,9 @@ export class Agent {
       parentExecutionId: req.headers['x-parent-execution-id'] as string | undefined,
       callerDid: req.headers['x-caller-did'] as string | undefined,
       targetDid: req.headers['x-target-did'] as string | undefined,
-      agentNodeDid: req.headers['x-agent-did'] as string | undefined
+      agentNodeDid:
+        (req.headers['x-agent-node-did'] as string | undefined) ??
+        (req.headers['x-agent-did'] as string | undefined)
     };
   }
 
@@ -440,8 +469,9 @@ export class Agent {
   }
 
   private dispatchMemoryEvent(event: MemoryChangeEvent) {
-    this.memoryWatchers.forEach(({ pattern, handler }) => {
-      if (matchesPattern(pattern, event.key)) {
+    this.memoryWatchers.forEach(({ pattern, handler, scope, scopeId }) => {
+      const scopeMatch = (!scope || scope === event.scope) && (!scopeId || scopeId === event.scopeId);
+      if (scopeMatch && matchesPattern(pattern, event.key)) {
         handler(event);
       }
     });

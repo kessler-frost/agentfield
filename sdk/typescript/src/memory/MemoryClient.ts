@@ -18,6 +18,7 @@ export interface MemoryRequestOptions {
   scope?: MemoryScope;
   scopeId?: string;
   metadata?: MemoryRequestMetadata;
+  headers?: Record<string, string | number | boolean | undefined>;
 }
 
 export interface VectorSearchOptions extends MemoryRequestOptions {
@@ -35,11 +36,13 @@ export interface VectorSearchResult {
 
 export class MemoryClient {
   private readonly http: AxiosInstance;
+  private readonly defaultHeaders: Record<string, string>;
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string, defaultHeaders?: Record<string, string | number | boolean | undefined>) {
     this.http = axios.create({
       baseURL: baseUrl.replace(/\/$/, '')
     });
+    this.defaultHeaders = this.sanitizeHeaders(defaultHeaders ?? {});
   }
 
   async set(key: string, data: any, options: MemoryRequestOptions = {}) {
@@ -66,6 +69,28 @@ export class MemoryClient {
       }
       throw err;
     }
+  }
+
+  async delete(key: string, options: MemoryRequestOptions = {}) {
+    const payload: any = { key };
+    if (options.scope) payload.scope = options.scope;
+
+    await this.http.post('/api/v1/memory/delete', payload, {
+      headers: this.buildHeaders(options)
+    });
+  }
+
+  async listKeys(scope: MemoryScope, options: MemoryRequestOptions = {}) {
+    const res = await this.http.get('/api/v1/memory/list', {
+      params: { scope },
+      headers: this.buildHeaders({ ...options, scope })
+    });
+    return (res.data ?? []).map((item: any) => item?.key).filter(Boolean) as string[];
+  }
+
+  async exists(key: string, options: MemoryRequestOptions = {}) {
+    const value = await this.get(key, options);
+    return value !== undefined;
   }
 
   async setVector(key: string, embedding: number[], metadata?: any, options: MemoryRequestOptions = {}) {
@@ -106,7 +131,7 @@ export class MemoryClient {
 
   private buildHeaders(options: MemoryRequestOptions = {}) {
     const { scope, scopeId, metadata } = options;
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { ...this.defaultHeaders };
 
     const workflowId = metadata?.workflowId ?? metadata?.runId;
     if (workflowId) headers['X-Workflow-ID'] = workflowId;
@@ -126,7 +151,7 @@ export class MemoryClient {
       headers[headerName] = resolvedScopeId;
     }
 
-    return headers;
+    return { ...headers, ...this.sanitizeHeaders(options.headers ?? {}) };
   }
 
   private scopeToHeader(scope?: MemoryScope) {
@@ -156,5 +181,14 @@ export class MemoryClient {
       default:
         return undefined;
     }
+  }
+
+  private sanitizeHeaders(headers: Record<string, any>): Record<string, string> {
+    const sanitized: Record<string, string> = {};
+    Object.entries(headers).forEach(([key, value]) => {
+      if (value === undefined || value === null) return;
+      sanitized[key] = typeof value === 'string' ? value : String(value);
+    });
+    return sanitized;
   }
 }

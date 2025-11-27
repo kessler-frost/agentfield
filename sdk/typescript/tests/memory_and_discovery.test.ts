@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import axios from 'axios';
 import { MemoryClient } from '../src/memory/MemoryClient.js';
+import { MemoryInterface } from '../src/memory/MemoryInterface.js';
 import { AgentFieldClient } from '../src/client/AgentFieldClient.js';
 import { WorkflowReporter } from '../src/workflow/WorkflowReporter.js';
 
@@ -88,6 +89,73 @@ describe('MemoryClient vector operations', () => {
       })
     );
     expect(res).toEqual(results);
+  });
+
+  it('deletes vectors with scoped headers', async () => {
+    const client = new MemoryClient('http://localhost:8080');
+    const http = getCreatedClient();
+    const post = vi.fn().mockResolvedValue({ data: {} });
+    http.post = post;
+
+    await client.deleteVector('chunk_2', {
+      scope: 'session',
+      scopeId: 's1',
+      metadata: { sessionId: 's1' }
+    });
+
+    expect(post).toHaveBeenCalledWith(
+      '/api/v1/memory/vector/delete',
+      {
+        key: 'chunk_2',
+        scope: 'session'
+      },
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'X-Session-ID': 's1'
+        })
+      })
+    );
+  });
+
+  it('deletes scalar memory with scoped headers', async () => {
+    const client = new MemoryClient('http://localhost:8080');
+    const http = getCreatedClient();
+    const post = vi.fn().mockResolvedValue({ data: {} });
+    http.post = post;
+
+    await client.delete('foo', { scope: 'session', scopeId: 's1', metadata: { sessionId: 's1' } });
+
+    expect(post).toHaveBeenCalledWith(
+      '/api/v1/memory/delete',
+      { key: 'foo', scope: 'session' },
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'X-Session-ID': 's1'
+        })
+      })
+    );
+  });
+
+  it('lists keys using scope param and scoped headers', async () => {
+    const client = new MemoryClient('http://localhost:8080');
+    const http = getCreatedClient();
+    http.get = vi.fn().mockResolvedValue({ data: [{ key: 'a' }, { key: 'b' }] });
+
+    const keys = await client.listKeys('workflow', {
+      scopeId: 'wf-1',
+      metadata: { workflowId: 'wf-1' }
+    });
+
+    expect(http.get).toHaveBeenCalledWith(
+      '/api/v1/memory/list',
+      expect.objectContaining({
+        params: { scope: 'workflow' },
+        headers: expect.objectContaining({
+          'X-Workflow-ID': 'wf-1'
+        })
+      })
+    );
+    expect(keys).toEqual(['a', 'b']);
   });
 });
 
@@ -182,5 +250,47 @@ describe('WorkflowReporter', () => {
       error: undefined,
       durationMs: undefined
     });
+  });
+});
+
+describe('MemoryInterface helpers', () => {
+  it('performs hierarchical get fallback', async () => {
+    const calls: any[] = [];
+    const stubClient = {
+      get: vi.fn().mockImplementation((_key: string, options: any) => {
+        calls.push(options.scope);
+        if (options.scope === 'session') return 'session-value';
+        return undefined;
+      })
+    } as any;
+
+    const memory = new MemoryInterface({
+      client: stubClient,
+      defaultScope: 'workflow',
+      metadata: { workflowId: 'wf-1', sessionId: 's-1' }
+    });
+
+    const result = await memory.get('k1');
+    expect(result).toBe('session-value');
+    expect(calls).toEqual(['workflow', 'session']);
+  });
+
+  it('scoped helpers set the correct scope and scopeId', async () => {
+    const set = vi.fn();
+    const memory = new MemoryInterface({
+      client: { set } as any,
+      defaultScope: 'workflow',
+      metadata: { workflowId: 'wf-1' }
+    });
+
+    await memory.session('s1').set('k', 'v');
+    expect(set).toHaveBeenCalledWith(
+      'k',
+      'v',
+      expect.objectContaining({
+        scope: 'session',
+        scopeId: 's1'
+      })
+    );
   });
 });

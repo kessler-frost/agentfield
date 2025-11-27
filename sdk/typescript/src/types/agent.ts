@@ -15,11 +15,13 @@ export interface AgentConfig {
   didEnabled?: boolean;
   devMode?: boolean;
   heartbeatIntervalMs?: number;
+  defaultHeaders?: Record<string, string | number | boolean | undefined>;
 }
 
 export interface AIConfig {
   provider?: 'openai' | 'anthropic' | 'openrouter' | 'ollama';
   model?: string;
+  embeddingModel?: string;
   apiKey?: string;
   baseUrl?: string;
   temperature?: number;
@@ -122,7 +124,7 @@ export interface DiscoveryOptions {
 export interface AgentState {
   reasoners: Map<string, ReasonerDefinition>;
   skills: Map<string, SkillDefinition>;
-  memoryWatchers: Array<{ pattern: string; handler: MemoryWatchHandler }>;
+  memoryWatchers: Array<{ pattern: string; handler: MemoryWatchHandler; scope?: string; scopeId?: string }>;
 }
 
 export interface HealthStatus {
