@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 <!-- changelog:entries -->
 
+## [0.1.11] - 2025-12-02
+
+
+### Fixed
+
+- Fix(docs-chatbot): handle PyPI race condition in Railway deploys
+
+Add install script that waits for agentfield package to be available
+on PyPI before installing. This fixes the race condition where Railway
+deployment triggers before the release workflow finishes uploading to PyPI.
+
+- Add install.sh with retry logic (30 attempts, 10s intervals)
+- Add nixpacks.toml to use custom install script
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude <noreply@anthropic.com> (e45f41d)
+
 ## [0.1.10] - 2025-12-02
 
 
