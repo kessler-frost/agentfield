@@ -536,6 +536,7 @@ class AgentFieldClient:
                 "POST",
                 f"{self.api_base}/nodes/register",
                 json=registration_data,
+                headers=self._get_auth_headers(),
                 timeout=30.0,
             )
             payload: Optional[Dict[str, Any]] = None
@@ -878,11 +879,13 @@ class AgentFieldClient:
             True if heartbeat was successful, False otherwise
         """
         try:
+            headers = {"Content-Type": "application/json"}
+            headers.update(self._get_auth_headers())
             response = await self._async_request(
                 "POST",
                 f"{self.api_base}/nodes/{node_id}/heartbeat",
                 json=heartbeat_data.to_dict(),
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 timeout=5.0,
             )
             response.raise_for_status()
@@ -904,10 +907,12 @@ class AgentFieldClient:
             True if heartbeat was successful, False otherwise
         """
         try:
+            headers = {"Content-Type": "application/json"}
+            headers.update(self._get_auth_headers())
             response = requests.post(
                 f"{self.api_base}/nodes/{node_id}/heartbeat",
                 json=heartbeat_data.to_dict(),
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 timeout=5.0,
             )
             response.raise_for_status()
@@ -926,10 +931,12 @@ class AgentFieldClient:
             True if notification was successful, False otherwise
         """
         try:
+            headers = {"Content-Type": "application/json"}
+            headers.update(self._get_auth_headers())
             response = await self._async_request(
                 "POST",
                 f"{self.api_base}/nodes/{node_id}/shutdown",
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 timeout=5.0,
             )
             response.raise_for_status()
@@ -948,9 +955,11 @@ class AgentFieldClient:
             True if notification was successful, False otherwise
         """
         try:
+            headers = {"Content-Type": "application/json"}
+            headers.update(self._get_auth_headers())
             response = requests.post(
                 f"{self.api_base}/nodes/{node_id}/shutdown",
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 timeout=5.0,
             )
             response.raise_for_status()
@@ -1016,6 +1025,7 @@ class AgentFieldClient:
                 "POST",
                 f"{self.api_base}/nodes/register",
                 json=registration_data,
+                headers=self._get_auth_headers(),
                 timeout=10.0,
             )
 
