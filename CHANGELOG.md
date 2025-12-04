@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 <!-- changelog:entries -->
 
+## [0.1.19] - 2025-12-04
+
+
+### Fixed
+
+- Fix(ui): add API key header to sidebar execution details fetch
+
+The useNodeDetails hook was making a raw fetch() call without including
+the X-API-Key header, causing 401 errors in staging where API key
+authentication is enabled. Other API calls in the codebase use
+fetchWrapper functions that properly inject the key. (f0ec542)
+
 ## [0.1.18] - 2025-12-03
 
 
