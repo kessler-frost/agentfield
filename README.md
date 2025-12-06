@@ -6,7 +6,7 @@
 
 ### **Deploy, Scale, Observe, and Prove.**
 
-*When AI moves from chatbots into backends—making decisions, not just answering questions—it needs infrastructure, not frameworks.*
+*When AI moves from chatbots into backends, making decisions, not just answering questions, it needs infrastructure, not frameworks.*
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-7c3aed.svg?style=flat&labelColor=1e1e2e)](LICENSE)
 [![Downloads](https://img.shields.io/github/downloads/Agent-Field/agentfield/total?style=flat&logo=github&logoColor=white&color=7c3aed&labelColor=1e1e2e)](https://github.com/Agent-Field/agentfield/releases)
