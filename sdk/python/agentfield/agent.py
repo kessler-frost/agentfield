@@ -575,7 +575,7 @@ class Agent(FastAPI):
         self._call_semaphore: Optional[asyncio.Semaphore] = None
         self._call_semaphore_guard = threading.Lock()
 
-    def handle_serverless(self, event: dict) -> dict:
+    def handle_serverless(self, event: dict, adapter: Optional[Callable] = None) -> dict:
         """
         Universal serverless handler for executing reasoners and skills.
 
@@ -616,11 +616,20 @@ class Agent(FastAPI):
         """
         import asyncio
 
+        if adapter:
+            try:
+                event = adapter(event) or event
+            except Exception as exc:  # pragma: no cover - adapter failures
+                return {
+                    "statusCode": 400,
+                    "body": {"error": f"serverless adapter failed: {exc}"},
+                }
+
         # Check if this is a discovery request
-        path = event.get("path", "")
+        path = event.get("path") or event.get("rawPath") or ""
         action = event.get("action", "")
 
-        if path == "/discover" or action == "discover":
+        if path == "/discover" or path.endswith("/discover") or action == "discover":
             # Return agent metadata for AgentField server registration
             return self._handle_discovery()
 
@@ -634,10 +643,33 @@ class Agent(FastAPI):
                 if self.dev_mode:
                     log_warn(f"Auto-registration failed: {e}")
 
+        # Serverless invocations arrive via the control plane; mark as connected so
+        # cross-agent calls can route through the gateway without a lease loop.
+        self.agentfield_connected = True
+        # Serverless handlers should avoid async execute polling; force sync path.
+        if getattr(self.async_config, "enable_async_execution", True):
+            self.async_config.enable_async_execution = False
+
         # Parse event format for execution
-        reasoner_name = event.get("reasoner") or event.get("target")
+        reasoner_name = (
+            event.get("reasoner") or event.get("target") or event.get("skill")
+        )
+        if not reasoner_name and path:
+            # Support paths like /execute/<target> or /reasoners/<name>
+            cleaned_path = path.split("?", 1)[0].strip("/")
+            parts = cleaned_path.split("/")
+            if parts and parts[0] not in ("", "discover"):
+                if len(parts) >= 2 and parts[0] in ("execute", "reasoners", "skills"):
+                    reasoner_name = parts[1]
+                elif parts[0] in ("execute", "reasoners", "skills"):
+                    reasoner_name = None
+                elif parts:
+                    reasoner_name = parts[-1]
+
         input_data = event.get("input") or event.get("input_data", {})
-        execution_context_data = event.get("execution_context", {})
+        execution_context_data = (
+            event.get("execution_context") or event.get("executionContext") or {}
+        )
 
         if not reasoner_name:
             return {
@@ -646,16 +678,33 @@ class Agent(FastAPI):
             }
 
         # Create execution context
+        exec_id = execution_context_data.get(
+            "execution_id", f"exec_{int(time.time() * 1000)}"
+        )
+        run_id = execution_context_data.get("run_id") or execution_context_data.get(
+            "workflow_id"
+        )
+        if not run_id:
+            run_id = f"wf_{int(time.time() * 1000)}"
+        workflow_id = execution_context_data.get("workflow_id", run_id)
+
         execution_context = ExecutionContext(
-            execution_id=execution_context_data.get(
-                "execution_id", f"exec_{int(time.time() * 1000)}"
-            ),
-            workflow_id=execution_context_data.get(
-                "workflow_id", f"wf_{int(time.time() * 1000)}"
-            ),
+            run_id=run_id,
+            execution_id=exec_id,
+            agent_instance=self,
             agent_node_id=self.node_id,
             reasoner_name=reasoner_name,
             parent_execution_id=execution_context_data.get("parent_execution_id"),
+            session_id=execution_context_data.get("session_id"),
+            actor_id=execution_context_data.get("actor_id"),
+            caller_did=execution_context_data.get("caller_did"),
+            target_did=execution_context_data.get("target_did"),
+            agent_node_did=execution_context_data.get(
+                "agent_node_did", execution_context_data.get("agent_did")
+            ),
+            workflow_id=workflow_id,
+            parent_workflow_id=execution_context_data.get("parent_workflow_id"),
+            root_workflow_id=execution_context_data.get("root_workflow_id"),
         )
 
         # Set execution context
@@ -672,10 +721,7 @@ class Agent(FastAPI):
                 else:
                     result = func(**input_data)
 
-                return {
-                    "statusCode": 200,
-                    "body": {"result": result, "status": "success"},
-                }
+                return {"statusCode": 200, "body": result}
             else:
                 return {
                     "statusCode": 404,
@@ -683,7 +729,7 @@ class Agent(FastAPI):
                 }
 
         except Exception as e:
-            return {"statusCode": 500, "body": {"error": str(e), "status": "error"}}
+            return {"statusCode": 500, "body": {"error": str(e)}}
         finally:
             # Clean up execution context
             self._current_execution_context = None
@@ -2810,8 +2856,13 @@ class Agent(FastAPI):
                 )
 
             # Extract the actual result from the response and return as dict
-            if isinstance(result, dict) and "result" in result:
-                extracted_result = result["result"]
+            if isinstance(result, dict):
+                if result.get("result") is not None:
+                    extracted_result = result["result"]
+                elif "body" in result:
+                    extracted_result = result["body"]
+                else:
+                    extracted_result = result
             else:
                 extracted_result = result
 

@@ -681,6 +681,17 @@ func (c *executionController) prepareExecution(ctx context.Context, ginCtx *gin.
 	if agent == nil {
 		return nil, fmt.Errorf("agent '%s' not found", target.NodeID)
 	}
+	if agent.DeploymentType == "" && agent.Metadata.Custom != nil {
+		if v, ok := agent.Metadata.Custom["serverless"]; ok && fmt.Sprint(v) == "true" {
+			agent.DeploymentType = "serverless"
+		}
+	}
+	if agent.DeploymentType == "serverless" && (agent.InvocationURL == nil || strings.TrimSpace(*agent.InvocationURL) == "") {
+		if trimmed := strings.TrimSpace(agent.BaseURL); trimmed != "" {
+			execURL := strings.TrimSuffix(trimmed, "/") + "/execute"
+			agent.InvocationURL = &execURL
+		}
+	}
 
 	targetType, err := determineTargetType(agent, target.TargetName)
 	if err != nil {
@@ -709,17 +720,6 @@ func (c *executionController) prepareExecution(ctx context.Context, ginCtx *gin.
 		return nil, fmt.Errorf("encode execution payload: %w", err)
 	}
 
-	agentPayload := make(map[string]interface{}, len(req.Input))
-	for key, value := range req.Input {
-		agentPayload[key] = value
-	}
-	agentPayloadBytes, err := json.Marshal(agentPayload)
-	if err != nil {
-		return nil, fmt.Errorf("encode agent payload: %w", err)
-	}
-
-	inputURI := c.savePayload(ctx, storedPayload)
-
 	exec := &types.Execution{
 		ExecutionID:       executionID,
 		RunID:             runID,
@@ -729,11 +729,28 @@ func (c *executionController) prepareExecution(ctx context.Context, ginCtx *gin.
 		NodeID:            target.NodeID,
 		Status:            types.ExecutionStatusRunning,
 		InputPayload:      json.RawMessage(storedPayload),
-		InputURI:          inputURI,
 		StartedAt:         now,
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}
+
+	agentPayload := make(map[string]interface{}, len(req.Input))
+	for key, value := range req.Input {
+		agentPayload[key] = value
+	}
+
+	var agentPayloadBytes []byte
+	if agent.DeploymentType == "serverless" {
+		agentPayloadBytes, err = json.Marshal(buildServerlessPayload(target, exec, headers, agentPayload))
+	} else {
+		agentPayloadBytes, err = json.Marshal(agentPayload)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("encode agent payload: %w", err)
+	}
+
+	inputURI := c.savePayload(ctx, storedPayload)
+	exec.InputURI = inputURI
 
 	if headers.sessionID != nil {
 		exec.SessionID = headers.sessionID
@@ -773,7 +790,7 @@ func (c *executionController) prepareExecution(ctx context.Context, ginCtx *gin.
 		exec.WebhookRegistered = false
 	}
 
-	c.ensureWorkflowExecutionRecord(ctx, exec, target, agentPayloadBytes)
+	c.ensureWorkflowExecutionRecord(ctx, exec, target, storedPayload)
 
 	return &preparedExecution{
 		exec:              exec,
@@ -797,6 +814,7 @@ func (c *executionController) callAgent(ctx context.Context, plan *preparedExecu
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Run-ID", plan.exec.RunID)
 	req.Header.Set("X-Execution-ID", plan.exec.ExecutionID)
+	req.Header.Set("X-Workflow-ID", plan.exec.RunID)
 	if plan.exec.ParentExecutionID != nil {
 		req.Header.Set("X-Parent-Execution-ID", *plan.exec.ParentExecutionID)
 	}
@@ -825,6 +843,15 @@ func (c *executionController) callAgent(ctx context.Context, plan *preparedExecu
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, time.Since(start), false, fmt.Errorf("read agent response: %w", err)
+	}
+
+	if plan.agent.DeploymentType == "serverless" {
+		logger.Logger.Debug().
+			Str("agent", plan.target.NodeID).
+			Str("reasoner", plan.target.TargetName).
+			Str("url", url).
+			Int("status", resp.StatusCode).
+			Msgf("serverless response: %s", truncateForLog(body))
 	}
 
 	if resp.StatusCode >= http.StatusBadRequest {
@@ -1007,8 +1034,15 @@ func buildAgentURL(agent *types.AgentNode, target *parsedTarget) string {
 	if agent == nil {
 		return ""
 	}
-	if agent.DeploymentType == "serverless" && agent.InvocationURL != nil && *agent.InvocationURL != "" {
+	if agent.InvocationURL != nil && *agent.InvocationURL != "" {
 		return *agent.InvocationURL
+	}
+	if agent.DeploymentType == "serverless" {
+		base := strings.TrimSuffix(agent.BaseURL, "/")
+		if base == "" {
+			return ""
+		}
+		return fmt.Sprintf("%s/execute", base)
 	}
 
 	base := strings.TrimSuffix(agent.BaseURL, "/")
@@ -1016,6 +1050,47 @@ func buildAgentURL(agent *types.AgentNode, target *parsedTarget) string {
 		return fmt.Sprintf("%s/skills/%s", base, target.TargetName)
 	}
 	return fmt.Sprintf("%s/reasoners/%s", base, target.TargetName)
+}
+
+func buildServerlessPayload(target *parsedTarget, exec *types.Execution, headers executionHeaders, input map[string]interface{}) map[string]interface{} {
+	if target == nil || exec == nil {
+		return map[string]interface{}{
+			"input": input,
+		}
+	}
+
+	execCtx := map[string]interface{}{
+		"execution_id": exec.ExecutionID,
+		"run_id":       exec.RunID,
+		"workflow_id":  exec.RunID,
+	}
+
+	if headers.parentExecutionID != nil && *headers.parentExecutionID != "" {
+		execCtx["parent_execution_id"] = *headers.parentExecutionID
+	}
+	if headers.sessionID != nil && *headers.sessionID != "" {
+		execCtx["session_id"] = *headers.sessionID
+	}
+	if headers.actorID != nil && *headers.actorID != "" {
+		execCtx["actor_id"] = *headers.actorID
+	}
+
+	payload := map[string]interface{}{
+		"path":              fmt.Sprintf("/execute/%s", target.TargetName),
+		"target":            target.TargetName,
+		"reasoner":          target.TargetName,
+		"input":             input,
+		"execution_context": execCtx,
+	}
+
+	if target.TargetType != "" {
+		payload["type"] = target.TargetType
+		if target.TargetType == "skill" {
+			payload["skill"] = target.TargetName
+		}
+	}
+
+	return payload
 }
 
 type normalizedWebhookConfig struct {
