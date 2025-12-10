@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 <!-- changelog:entries -->
 
+## [0.1.21-rc.2] - 2025-12-10
+
+
+### Fixed
+
+- Fix: correct parent execution ID for sub-calls in app.call() (#62)
+
+When a reasoner calls a skill via app.call(), the X-Parent-Execution-ID
+  header was incorrectly set to the inherited parent instead of the current
+  execution. This caused workflow graphs to show incorrect parent-child
+  relationships.
+
+  The fix overrides X-Parent-Execution-ID to use the current execution's ID
+  after to_headers() is called, ensuring sub-calls are correctly attributed
+  as children of the calling execution.
+
+Co-authored-by: Ivan Viljoen <8543825+ivanvza@users.noreply.github.com> (762142e)
+
+
+
+### Other
+
+- Update README to remove early adopter notice
+
+Removed early adopter section from README. (054fc22)
+
+- Update README.md (dae57c7)
+
+- Update README.md (06e5cee)
+
+- Update README.md (39c2da4)
+
 ## [0.1.21-rc.1] - 2025-12-06
 
 
