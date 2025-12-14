@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 <!-- changelog:entries -->
 
+## [0.1.21-rc.3] - 2025-12-14
+
+
+### Other
+
+- Test pr 68 init fix (#69)
+
+* fix(cli): fix init command input handling issues
+
+- Fix j/k keys not registering during text input
+- Fix ctrl+c not cancelling properly
+- Fix selected option shifting other items
+- Filter special keys from text input
+- Add ctrl+u to clear input line
+- Add unit tests for init model
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+
+* docs: add changelog entry for CLI init fixes
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+
+* chore: trigger CI with secrets
+
+* chore: remove manual changelog entry (auto-generated on release)
+
+---------
+
+Co-authored-by: fimbulwinter <sanandsankalp@gmail.com>
+Co-authored-by: Claude Opus 4.5 <noreply@anthropic.com> (55d0c61)
+
 ## [0.1.21-rc.2] - 2025-12-10
 
 
