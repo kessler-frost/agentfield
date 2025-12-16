@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 <!-- changelog:entries -->
 
+## [0.1.22-rc.3] - 2025-12-16
+
+
+### Added
+
+- Feat(go-sdk): add per-request API key override for AI client (#73)
+
+Add WithAPIKey option to override the client's configured API key on a
+per-request basis. This brings the Go SDK to parity with the Python SDK,
+which supports api_key overrides in individual calls.
+
+Changes:
+- Add APIKeyOverride field to Request struct (excluded from JSON)
+- Add WithAPIKey option function
+- Update doRequest and StreamComplete to use override when provided
+- Add test for API key override behavior
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-authored-by: Claude Opus 4.5 <noreply@anthropic.com> (4dd8a70)
+
 ## [0.1.22-rc.2] - 2025-12-15
 
 
