@@ -6,6 +6,72 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 <!-- changelog:entries -->
 
+## [0.1.24-rc.1] - 2025-12-17
+
+
+### Added
+
+- Feat(go-sdk): add ControlPlaneMemoryBackend for distributed memory (#80)
+
+Add a new MemoryBackend implementation that delegates storage to the
+control plane's /api/v1/memory/* endpoints. This enables distributed,
+scope-aware memory across agents.
+
+- Implements Set, Get, Delete, and List operations
+- Maps SDK scopes (Workflow, Session, User, Global) to API scopes
+- User scope maps to "actor" terminology in the API
+- Includes comprehensive unit tests
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-authored-by: Claude Opus 4.5 <noreply@anthropic.com> (6cd445c)
+
+- Feat: add RAG evaluation example with multi-reasoner architecture (#79)
+
+* feat: add RAG evaluation example with multi-reasoner architecture
+
+Adds a comprehensive RAG evaluation agent demonstrating:
+- Adversarial debate for faithfulness (prosecutor vs defender + judge)
+- Multi-jury consensus for relevance (3 jurors vote on literal/intent/scope)
+- Hybrid ML+LLM chain-of-verification for hallucination detection
+- Configurable constitutional principles evaluation
+
+Features:
+- Docker Compose deployment (control plane + agent + UI)
+- Next.js web interface with claim-level breakdown
+- Domain-specific presets (medical, legal, financial)
+- 3 evaluation modes: quick (4 calls), standard (14), thorough (20+)
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+
+* Remove ARCHITECTURE.md, link to website docs instead
+
+The detailed architecture documentation is now on the website at
+agentfield.dev/examples/complete-agents/rag-evaluator - no need
+to duplicate content in the repo.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+
+* Add examples README with quick reference table
+
+Index of all examples across Python, TypeScript, and Go with:
+- Quick reference table by use case and language
+- Detailed per-language tables with key features
+- Use case deep dives (RAG progression, multi-agent, serverless)
+- Technology stack overview
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Opus 4.5 <noreply@anthropic.com> (862c41e)
+
 ## [0.1.23] - 2025-12-16
 
 ## [0.1.23-rc.1] - 2025-12-16
